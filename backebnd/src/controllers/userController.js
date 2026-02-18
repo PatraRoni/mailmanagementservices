@@ -1,14 +1,12 @@
-const { prisma } = require('../config/database');
+import { prisma } from '../config/database.js';
 
-// Validation helper
+
 const validateEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
 };
 
-// @desc    Create a new user
-// @route   POST /api/users
-// @access  Public
+
 const createUser = async (req, res, next) => {
   try {
     const { name, email } = req.body;
@@ -46,31 +44,144 @@ const createUser = async (req, res, next) => {
   }
 };
 
-// @desc    Get all users
-// @route   GET /api/users
-// @access  Public
+
 const getAllUsers = async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({
-      orderBy: {
-        createdAt: 'desc'
+    const page      = parseInt(req.query.page)  || 1;
+    const limit     = parseInt(req.query.limit) || 5;
+    const search    = req.query.search?.trim()  || '';
+    const startDate = req.query.startDate       || null;
+    const endDate   = req.query.endDate         || null;
+    const sortOrder = req.query.sortOrder === 'asc' ? 'asc' : 'desc';
+    const skip      = (page - 1) * limit;
+
+    // ── Build dynamic where clause ───────────────────────────────────────
+    const where = {};
+
+    // Filter by name (case-insensitive)
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+
+    // Filter by date range
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate); // from start of day
       }
-    });
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);            // to end of day
+        where.createdAt.lte = end;
+      }
+    }
+
+    // Run both queries in parallel
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: sortOrder },         // newest or oldest first
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
 
     res.status(200).json({
       success: true,
       message: 'Users retrieved successfully',
-      count: users.length,
-      data: users
+      data: users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get single user by ID
-// @route   GET /api/users/:id
-// @access  Public
+
+const bulkCreateUsers = async (req, res, next) => {
+  try {
+    const { users } = req.body;
+
+    // Validate request body
+    if (!users || !Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide an array of users',
+      });
+    }
+
+    if (users.length > 500) {
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum 500 users can be imported at once',
+      });
+    }
+
+    // Validate each row
+    const validUsers   = [];
+    const failedRows   = [];
+    const emailsSeen   = new Set(); // catch duplicates within the file itself
+
+    users.forEach((user, index) => {
+      const rowErrors = [];
+      const name  = String(user.name  || '').trim();
+      const email = String(user.email || '').toLowerCase().trim();
+
+      if (!name)                   rowErrors.push('Name is required');
+      if (!email)                  rowErrors.push('Email is required');
+      else if (!validateEmail(email)) rowErrors.push('Invalid email format');
+      else if (emailsSeen.has(email)) rowErrors.push('Duplicate email in file');
+      else emailsSeen.add(email);
+
+      if (rowErrors.length > 0) {
+        failedRows.push({ row: index + 1, data: user, errors: rowErrors });
+      } else {
+        validUsers.push({ name, email });
+      }
+    });
+
+    if (validUsers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid users to import',
+        data: { imported: 0, skipped: 0, failed: failedRows.length },
+        failedRows,
+      });
+    }
+
+    // createMany with skipDuplicates skips emails already in DB
+    const result = await prisma.user.createMany({
+      data: validUsers,
+      skipDuplicates: true,
+    });
+
+    const skipped = validUsers.length - result.count;
+
+    res.status(201).json({
+      success: true,
+      message: `Import complete: ${result.count} imported, ${skipped} skipped, ${failedRows.length} failed`,
+      data: {
+        imported: result.count,
+        skipped,
+        failed: failedRows.length,
+        failedRows: failedRows.length > 0 ? failedRows : undefined,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getUserById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -106,9 +217,7 @@ const getUserById = async (req, res, next) => {
   }
 };
 
-// @desc    Get user by email
-// @route   GET /api/users/email/:email
-// @access  Public
+
 const getUserByEmail = async (req, res, next) => {
   try {
     const { email } = req.params;
@@ -136,9 +245,7 @@ const getUserByEmail = async (req, res, next) => {
   }
 };
 
-// @desc    Update user
-// @route   PUT /api/users/:id
-// @access  Public
+
 const updateUser = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -189,9 +296,7 @@ const updateUser = async (req, res, next) => {
   }
 };
 
-// @desc    Delete user
-// @route   DELETE /api/users/:id
-// @access  Public
+
 const deleteUser = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -219,9 +324,7 @@ const deleteUser = async (req, res, next) => {
   }
 };
 
-// @desc    Delete all users
-// @route   DELETE /api/users
-// @access  Public
+
 const deleteAllUsers = async (req, res, next) => {
   try {
     const result = await prisma.user.deleteMany({});
@@ -236,12 +339,52 @@ const deleteAllUsers = async (req, res, next) => {
   }
 };
 
-module.exports = {
+const exportUsers = async (req, res, next) => {
+  try {
+    const search    = req.query.search?.trim() || '';
+    const startDate = req.query.startDate      || null;
+    const endDate   = req.query.endDate        || null;
+    const sortOrder = req.query.sortOrder === 'asc' ? 'asc' : 'desc';
+
+    // Reuse same filter logic as getAllUsers — but NO pagination
+    const where = {};
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    const users = await prisma.user.findMany({
+      where,
+      orderBy: { createdAt: sortOrder },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `${users.length} users ready for export`,
+      data: users,
+      count: users.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export {
   createUser,
   getAllUsers,
   getUserById,
   getUserByEmail,
   updateUser,
   deleteUser,
-  deleteAllUsers
+  deleteAllUsers,
+  bulkCreateUsers,
+  exportUsers,
 };

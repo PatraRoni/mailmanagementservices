@@ -42,11 +42,15 @@ const UserTable = ({ users, onEdit, onDelete, loading }) => {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200">
-          {users.map((user) => (
+          {users.map((user, index) => (
             <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+
+              {/* ✅ CHANGE 2: Replace user.id with index + 1 */}
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                {user.id}
+                {index + 1}
               </td>
+
+              {/* Everything else stays the same */}
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="text-sm font-medium text-gray-900">{user.name}</div>
               </td>
