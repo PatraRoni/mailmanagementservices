@@ -1,6 +1,7 @@
-import express from "express";
-const router = express.Router();
+// src/routes/userRoutes.js
 
+import express from 'express';
+import { protect } from '../middleware/authMiddleware.js';
 import {
   createUser,
   getAllUsers,
@@ -11,29 +12,24 @@ import {
   deleteAllUsers,
   bulkCreateUsers,
   exportUsers,
-} from '../controllers/userController.js'
+} from '../controllers/userController.js';
 
-// Create a new user
+const router = express.Router();
+
+// All user-management routes require authentication
+router.use(protect);
+
 router.post('/', createUser);
-router.post('/bulk',  bulkCreateUsers);
+router.post('/bulk', bulkCreateUsers);
 
-// Get all users
 router.get('/', getAllUsers);
-router.get('/export',    exportUsers);
-// Get user by email
+router.get('/export', exportUsers);
 router.get('/email/:email', getUserByEmail);
-
-// Get user by ID
 router.get('/:id', getUserById);
 
-
-// Update user
 router.put('/:id', updateUser);
 
-// Delete user
 router.delete('/:id', deleteUser);
-
-// Delete all users (be careful with this in production!)
 router.delete('/', deleteAllUsers);
 
 export default router;
